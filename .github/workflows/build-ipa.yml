@@ -37,6 +37,8 @@ jobs:
         run: |
           sw_vers
           uname -m
+          echo "hostname: $(hostname)"
+          hostname | awk '{print "hostname length:", length($0)}'
           xcodebuild -version
           xcode-select -p
           node --version

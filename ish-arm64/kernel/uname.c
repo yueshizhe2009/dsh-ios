@@ -23,7 +23,14 @@ void do_uname(struct uname *uts) {
 
     memset(uts, 0, sizeof(struct uname));
     strcpy(uts->system, "Linux");
-    strcpy(uts->hostname, hostname);
+    // The host's nodename can be longer than the guest's UNAME_LENGTH (65) field —
+    // GitHub's macOS runners exceed it. A plain strcpy then overflows the memset
+    // tail and aborts via __chk_fail_overflow (_FORTIFY_SOURCE), which newer
+    // Xcode/SDKs enable by default. Clamp like linux_sethostname() does.
+    size_t hostname_len = strlen(hostname);
+    if (hostname_len > sizeof(uts->hostname) - 1)
+        hostname_len = sizeof(uts->hostname) - 1;
+    memcpy(uts->hostname, hostname, hostname_len);
     strcpy(uts->release, "4.20.69-ish");
     snprintf(uts->version, sizeof(uts->version), "%s %s %s", uname_version, __DATE__, __TIME__);
 #if defined(GUEST_ARM64)
