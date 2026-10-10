@@ -1,0 +1,98 @@
+name: Build DSH iOS IPA
+
+# 在 GitHub 的 macOS runner 上产出未签名 .ipa。
+# 本机构建需要 macOS + Xcode 27；这份 workflow 让没有 Mac 也能出产物。
+# 注意：未签名 .ipa 不能直接装到设备，需要用自己的 Apple ID 重新签名
+# （Sideloadly / AltStore）后侧载。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-ipa.yml"
+      - "app/**"
+      - "scripts/**"
+      - "rootfs/**"
+      - "ish-arm64/**"
+      - "Makefile"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-dsh-ipa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # xcode-27 = macOS 27 + Xcode 27（public preview）。项目 README 要求 Xcode 27。
+    runs-on: xcode-27
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcode-select -p
+          node --version
+          ruby --version
+
+      - name: Install build tools
+        run: |
+          brew install meson ninja lld
+          gem install xcodeproj --no-document
+
+      - name: Verify ld.lld (guest VDSO needs it)
+        run: |
+          command -v ld.lld
+          ld.lld --version
+
+      - name: Build emulator (iSH-ARM64)
+        run: make emulator
+
+      - name: Build guest rootfs (Alpine + Node 22 + dsh)
+        run: make rootfs
+
+      - name: Generate Xcode project
+        run: make project
+
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project DSH.xcodeproj \
+            -scheme DSH \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build/xcodebuild.log
+
+      - name: Package unsigned IPA
+        run: |
+          APP="build/DerivedData/Build/Products/Release-iphoneos/DSH.app"
+          test -d "$APP"
+          rm -rf build/ipa
+          mkdir -p build/ipa/Payload
+          cp -R "$APP" build/ipa/Payload/DSH.app
+          ( cd build/ipa && zip -qry ../DSH-unsigned.ipa Payload )
+          ls -lh build/DSH-unsigned.ipa
+
+      - name: Upload IPA and build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-ios-${{ github.run_number }}
+          path: |
+            build/DSH-unsigned.ipa
+            build/xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 14
