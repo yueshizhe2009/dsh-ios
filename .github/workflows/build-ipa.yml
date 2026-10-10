@@ -44,13 +44,18 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install meson ninja lld
+          # libarchive 必须装：ish-arm64/tools/meson.build:24 用 dependency('libarchive')
+          # 找系统库，找不到就整块跳过 → fakefsify 不会被编译 → make rootfs 失败。
+          brew install meson ninja lld libarchive
           gem install xcodeproj --no-document
 
-      - name: Verify ld.lld (guest VDSO needs it)
+      - name: Verify toolchain libs
         run: |
           command -v ld.lld
           ld.lld --version
+          echo "libarchive prefix: $(brew --prefix libarchive)"
+          ls -1 "$(brew --prefix libarchive)/lib/" | grep -i '^libarchive' || true
+          pkg-config --modversion libarchive 2>/dev/null || echo "pkg-config: libarchive.pc 未注册（meson 会走 find_library 回退）"
 
       - name: Build emulator (iSH-ARM64)
         run: make emulator
